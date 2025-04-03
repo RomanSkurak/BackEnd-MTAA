@@ -1,20 +1,46 @@
-const express = require('express');
-const cors = require('cors');
-const app = express();
+const express = require('express')
+const bodyParser = require('body-parser')
+const authenticateToken = require('./auth'); // import middleware
+const app = express()
+const db = require('./queries')
+const port = 3000
 
-require('dotenv').config();
-const db = require('./db');
+app.use(bodyParser.json())
+app.use(
+  bodyParser.urlencoded({
+    extended: true,
+  })
+)
 
+app.get('/', (request, response) => {
+    response.json({ info: 'API running' })
+  })
 
-const setsRoutes = require('./routes/sets');
-
-app.use(cors());
-app.use(express.json());
-
-app.use('/sets', setsRoutes);
-
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server is running on http://0.0.0.0:${PORT}`);
+// Testovaci chránený endpoint
+app.get('/protected', authenticateToken, (req, res) => {
+  res.json({ message: 'This is protected data.', user: req.user });
 });
+
+app.get('/verify-token', authenticateToken, (req, res) => {
+  res.status(200).send('Token is valid');
+});
+
+
+//V Appke pridat posielanie headeru spolu s requestom
+app.get('/flashcard-sets', authenticateToken, db.getFlashcardsSets);
+app.post('/flashcard-sets', authenticateToken, db.createFlashcardSet);
+
+
+//CustomMadeFunctions
+app.post('/register', db.registerUser);
+app.post('/login', db.loginUser);
+app.get('/statistics', authenticateToken, db.getUserStatistics);
+
+
+
+app.listen(port, () => {
+    console.log(`App running on port ${port}.`)
+  })
+
+
+  
