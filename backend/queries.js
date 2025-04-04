@@ -1,7 +1,8 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const SECRET_KEY = 'tajny_kluc'; // ideálne z .env súboru
-
+//const multer = require('multer');
+//const upload = multer();
 
 const Pool = require('pg').Pool
 const pool = new Pool({
@@ -56,7 +57,7 @@ const loginUser = async (req, res) => {
     }
 
     const token = jwt.sign({ userId: user.user_id, email: user.email }, SECRET_KEY, {
-      expiresIn: '1h',
+      expiresIn: '8h',
     });
 
     res.status(200).json({ token });
@@ -157,14 +158,635 @@ const getFlashcardsSets = (req, res) => {
   });
 };
 
+// DELETE Flashcard Set
+const deleteFlashcardSet = (req, res) => {
+  const { set_id } = req.params;
+  const userId = req.user.userId;
+
+  const query = `
+    DELETE FROM Flashcard_Set
+    WHERE set_id = $1 AND user_id = $2
+    RETURNING *;
+  `;
+
+  pool.query(query, [set_id, userId], (err, result) => {
+    if (err) {
+      console.error("Error deleting set:", err);
+      return res.status(500).send("Failed to delete flashcard set.");
+    }
+
+    if (result.rows.length === 0) {
+      return res.status(404).send("Flashcard set not found or unauthorized.");
+    }
+
+    res.status(200).json({
+      message: "Flashcard set deleted successfully.",
+      deletedSet: result.rows[0],
+    });
+  });
+};
+
+
+// UPDATE Flashcard Set
+const updateFlashcardSet = (req, res) => {
+  const { set_id } = req.params;
+  const { name, is_public_FYN } = req.body;
+  const userId = req.user.userId;
+
+  if (!name) {
+    return res.status(400).send("Set name is required.");
+  }
+
+  const query = `
+    UPDATE Flashcard_Set
+    SET name = $1,
+        is_public_FYN = $2,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE set_id = $3 AND user_id = $4
+    RETURNING *;
+  `;
+
+  pool.query(query, [name, is_public_FYN ?? false, set_id, userId], (err, result) => {
+    if (err) {
+      console.error("Error updating set:", err);
+      return res.status(500).send("Failed to update flashcard set.");
+    }
+
+    if (result.rows.length === 0) {
+      return res.status(404).send("Flashcard set not found or unauthorized.");
+    }
+
+    res.status(200).json({
+      message: "Flashcard set updated successfully.",
+      updatedSet: result.rows[0],
+    });
+  });
+};
+
+
+//GET Flashcard
+const getFlashcardsBySet = (req, res) => {
+  const userId = req.user.userId;
+  const setId = req.params.set_id;
+
+  const query = `
+    SELECT f.flashcard_id, f.name, f.data_type, f.front_side, f.back_side,
+           encode(f.image_front, 'base64') AS image_front,
+           encode(f.image_back, 'base64') AS image_back
+    FROM Flashcards f
+    JOIN Flashcard_Set fs ON f.set_id = fs.set_id
+    WHERE f.set_id = $1 AND fs.user_id = $2
+    ORDER BY f.flashcard_id ASC
+  `;
+
+  pool.query(query, [setId,userId], (error, results) => {
+    if (error) {
+      console.error('Error fetching flashcards:', error);
+      return res.status(500).send('Database error');
+    }
+
+    res.status(200).json(results.rows);
+  });
+};
+
+
+
+
+//CREATE Flashcard
+const createFlashcard = (req, res) => {
+  const { set_id, name, data_type, front_side, back_side } = req.body;
+  const userId = req.user.userId;
+
+  if (!set_id || !name || !data_type) {
+    return res.status(400).send("Missing fields.");
+  }
+
+  const imageFront = req.files?.image_front?.[0]?.buffer || null;
+  const imageBack = req.files?.image_back?.[0]?.buffer || null;
+
+  pool.query(
+    `INSERT INTO Flashcards 
+     (set_id, name, data_type, front_side, back_side, image_front, image_back) 
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    [set_id, name, data_type, front_side, back_side, imageFront, imageBack],
+    (err, result) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).send("Database error");
+      }
+
+      res.status(201).json({
+        message: "Flashcard created",
+        flashcard: result.rows[0],
+      });
+    }
+  );
+};
+
+
+//DELETE Flashcard
+const deleteFlashcard = (req, res) => {
+  const flashcardId = parseInt(req.params.flashcard_id);
+  const userId = req.user.userId;
+
+  if (!flashcardId) {
+    return res.status(400).send("Missing flashcard ID.");
+  }
+
+  const query = `
+    DELETE FROM Flashcards 
+    WHERE flashcard_id = $1 
+    AND set_id IN (
+      SELECT set_id FROM Flashcard_Set WHERE user_id = $2
+    )
+    RETURNING *;
+  `;
+
+  pool.query(query, [flashcardId, userId], (err, result) => {
+    if (err) {
+      console.error('Database error:', err);
+      return res.status(500).send("Database error.");
+    }
+
+    if (result.rows.length === 0) {
+      return res.status(404).send("Flashcard not found or not authorized.");
+    }
+
+    res.status(200).json({
+      message: "Flashcard deleted successfully.",
+      deleted: result.rows[0]
+    });
+  });
+};
+
+
+
+// UPDATE Flashcard (iba pre vlastníka)
+const updateFlashcard = (req, res) => {
+  const flashcardId = parseInt(req.params.flashcard_id);
+  const userId = req.user.userId;
+
+  const { name, front_side, back_side, data_type } = req.body;
+  const imageFront = req.files?.image_front?.[0]?.buffer || null;
+  const imageBack = req.files?.image_back?.[0]?.buffer || null;
+
+  const fields = [];
+  const values = [];
+  let idx = 1;
+
+  if (name) {
+    fields.push(`name = $${idx++}`);
+    values.push(name);
+  }
+  if (data_type) {
+    fields.push(`data_type = $${idx++}`);
+    values.push(data_type);
+  }
+  if (front_side !== undefined) {
+    fields.push(`front_side = $${idx++}`);
+    values.push(front_side);
+  }
+  if (back_side !== undefined) {
+    fields.push(`back_side = $${idx++}`);
+    values.push(back_side);
+  }
+  if (imageFront !== null) {
+    fields.push(`image_front = $${idx++}`);
+    values.push(imageFront);
+  }
+  if (imageBack !== null) {
+    fields.push(`image_back = $${idx++}`);
+    values.push(imageBack);
+  }
+
+  if (fields.length === 0) {
+    return res.status(400).send('Nothing to update.');
+  }
+
+  // Pridáme kontrolu vlastníctva cez JOIN na Flashcard_Set
+  const query = `
+    UPDATE Flashcards 
+    SET ${fields.join(', ')}
+    WHERE flashcard_id = $${idx}
+      AND set_id IN (
+        SELECT set_id FROM Flashcard_Set WHERE user_id = $${idx + 1}
+      )
+    RETURNING *;
+  `;
+  values.push(flashcardId, userId);
+
+  pool.query(query, values, (err, result) => {
+    if (err) {
+      console.error('Error updating flashcard:', err);
+      return res.status(500).send('Database error');
+    }
+
+    if (result.rowCount === 0) {
+      return res.status(404).send('Flashcard not found or not authorized.');
+    }
+
+    res.status(200).json({
+      message: 'Flashcard updated successfully',
+      flashcard: result.rows[0],
+    });
+  });
+};
+
+//RESET Statistics
+const resetStatistics = (req, res) => {
+  const userId = req.user.userId;
+
+  const query = `
+    UPDATE Users
+    SET avg_accuracy = 0,
+        total_learning_time = 0,
+        best_learning_streak = 0,
+        current_learning_streak = 0
+    WHERE user_id = $1
+    RETURNING avg_accuracy, total_learning_time, best_learning_streak, current_learning_streak
+  `;
+
+  pool.query(query, [userId], (err, result) => {
+    if (err) {
+      console.error('Error resetting statistics:', err);
+      return res.status(500).send("Database error");
+    }
+
+    res.status(200).json({
+      message: "Statistics reset successfully",
+      statistics: result.rows[0],
+    });
+  });
+};
+
+
+//UPDATE statistics
+const updateStatistics = (req, res) => {
+  const userId = req.user.userId;
+  const { avg_accuracy, total_learning_time, best_learning_streak, current_learning_streak } = req.body;
+
+  const fields = [];
+  const values = [];
+  let idx = 1;
+
+  if (avg_accuracy !== undefined) {
+    fields.push(`avg_accuracy = $${idx++}`);
+    values.push(avg_accuracy);
+  }
+  if (total_learning_time !== undefined) {
+    fields.push(`total_learning_time = $${idx++}`);
+    values.push(total_learning_time);
+  }
+  if (best_learning_streak !== undefined) {
+    fields.push(`best_learning_streak = $${idx++}`);
+    values.push(best_learning_streak);
+  }
+  if (current_learning_streak !== undefined) {
+    fields.push(`current_learning_streak = $${idx++}`);
+    values.push(current_learning_streak);
+  }
+
+  if (fields.length === 0) {
+    return res.status(400).send("No statistics to update.");
+  }
+
+  const query = `
+    UPDATE Users SET ${fields.join(', ')}
+    WHERE user_id = $${idx}
+    RETURNING avg_accuracy, total_learning_time, best_learning_streak, current_learning_streak
+  `;
+  values.push(userId);
+
+  pool.query(query, values, (err, result) => {
+    if (err) {
+      console.error('Error updating statistics:', err);
+      return res.status(500).send("Database error");
+    }
+
+    res.status(200).json({
+      message: "Statistics updated",
+      statistics: result.rows[0],
+    });
+  });
+};
+
+
+//FCM TOKEN PRE PUSH NOTIFIKACIE (stiahnut dependecies a import do Flutteru)
+const saveNotificationToken = (req, res) => {
+  const userId = req.user.userId;
+  const { fcm_token } = req.body;
+
+  if (!fcm_token) {
+    return res.status(400).send("Missing FCM token.");
+  }
+
+  // Najprv overíme, či tento token už pre používateľa existuje
+  const checkQuery = `
+    SELECT * FROM User_Devices 
+    WHERE user_id = $1 AND fcm_token = $2
+  `;
+
+  pool.query(checkQuery, [userId, fcm_token], (err, result) => {
+    if (err) {
+      console.error("Database error:", err);
+      return res.status(500).send("Database error.");
+    }
+
+    if (result.rows.length > 0) {
+      return res.status(200).json({ message: "Token already registered." });
+    }
+
+    // Ak nie, vložíme nový záznam
+    const insertQuery = `
+      INSERT INTO User_Devices (user_id, fcm_token)
+      VALUES ($1, $2)
+      RETURNING *
+    `;
+
+    pool.query(insertQuery, [userId, fcm_token], (err, result) => {
+      if (err) {
+        console.error("Error saving token:", err);
+        return res.status(500).send("Failed to save token.");
+      }
+
+      res.status(201).json({
+        message: "FCM token saved successfully.",
+        device: result.rows[0]
+      });
+    });
+  });
+};
+
+//GET PREFERENCIE (DARK MODE)
+const getUserPreferences = (req, res) => {
+  const userId = req.user.userId;
+
+  pool.query(
+    'SELECT darkmode_FYN FROM Users WHERE user_id = $1',
+    [userId],
+    (err, result) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).send('Database error.');
+      }
+
+      if (result.rows.length === 0) {
+        return res.status(404).send('User not found.');
+      }
+
+      res.status(200).json({
+        dark_mode: result.rows[0].darkmode_fyn
+      });
+    }
+  );
+};
+
+
+//AKTUALIZACIA preferencii
+const updateUserPreferences = (req, res) => {
+  const userId = req.user.userId;
+  const { dark_mode } = req.body;
+
+  if (typeof dark_mode !== 'boolean') {
+    return res.status(400).send("dark_mode must be boolean.");
+  }
+
+  pool.query(
+    'UPDATE Users SET darkmode_FYN = $1 WHERE user_id = $2 RETURNING darkmode_FYN',
+    [dark_mode, userId],
+    (err, result) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).send("Database error.");
+      }
+
+      res.status(200).json({
+        message: "Preferences updated.",
+        dark_mode: result.rows[0].darkmode_fyn
+      });
+    }
+  );
+};
+
+
+const getPublicSets = (req, res) => {
+  const query = `
+    SELECT set_id, name, user_id, created_at
+    FROM Flashcard_Set
+    WHERE is_public_FYN = true
+    ORDER BY created_at DESC
+  `;
+
+  pool.query(query, (err, result) => {
+    if (err) {
+      console.error("Error fetching public sets:", err);
+      return res.status(500).send("Database error");
+    }
+
+    res.status(200).json(result.rows);
+  });
+};
+
+
+
+
+const getPublicFlashcardsBySet = (req, res) => {
+  const setId = req.params.set_id;
+
+  const query = `
+    SELECT f.flashcard_id, f.name, f.data_type, f.front_side, f.back_side,
+           encode(f.image_front, 'base64') AS image_front,
+           encode(f.image_back, 'base64') AS image_back
+    FROM Flashcards f
+    JOIN Flashcard_Set s ON f.set_id = s.set_id
+    WHERE f.set_id = $1 AND s.is_public_FYN = true
+    ORDER BY f.flashcard_id ASC
+  `;
+
+  pool.query(query, [setId], (err, result) => {
+    if (err) {
+      console.error("Error fetching public flashcards:", err);
+      return res.status(500).send("Database error");
+    }
+
+    res.status(200).json(result.rows);
+  });
+};
+
+
+const createPublicSet = (req, res) => {
+  const { name } = req.body;
+  const userId = req.user.userId;
+  const role = req.user.user_role;
+
+  if (role !== 'admin') {
+    return res.status(403).send("Unauthorized: Only admin can create public sets.");
+  }
+
+  if (!name) {
+    return res.status(400).send("Missing set name.");
+  }
+
+  pool.query(
+    `INSERT INTO Flashcard_Set (user_id, name, is_public_FYN) 
+     VALUES ($1, $2, true) RETURNING *`,
+    [userId, name],
+    (err, result) => {
+      if (err) {
+        console.error("Error creating public set:", err);
+        return res.status(500).send("Database error");
+      }
+
+      res.status(201).json({
+        message: "Public set created",
+        set: result.rows[0]
+      });
+    }
+  );
+};
+
+
+
+const createPublicFlashcard = (req, res) => {
+  const { set_id, name, data_type, front_side, back_side } = req.body;
+  const userId = req.user.userId;
+  const role = req.user.user_role;
+
+  if (role !== 'admin') {
+    return res.status(403).send("Unauthorized: Only admin can add public flashcards.");
+  }
+
+  if (!set_id || !name || !data_type) {
+    return res.status(400).send("Missing required fields.");
+  }
+
+  const imageFront = req.files?.image_front?.[0]?.buffer || null;
+  const imageBack = req.files?.image_back?.[0]?.buffer || null;
+
+  pool.query(
+    `INSERT INTO Flashcards 
+     (set_id, name, data_type, front_side, back_side, image_front, image_back)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING *`,
+    [set_id, name, data_type, front_side || "", back_side || "", imageFront, imageBack],
+    (err, result) => {
+      if (err) {
+        console.error("Error inserting public flashcard:", err);
+        return res.status(500).send("Database error");
+      }
+
+      res.status(201).json({
+        message: "Public flashcard created",
+        flashcard: result.rows[0]
+      });
+    }
+  );
+};
+
+
+
+const deletePublicSet = (req, res) => {
+  const setId = parseInt(req.params.set_id);
+  const role = req.user.user_role;
+
+  if (role !== 'admin') {
+    return res.status(403).send("Unauthorized: Only admin can delete public sets.");
+  }
+
+  if (!setId) {
+    return res.status(400).send("Missing set ID.");
+  }
+
+  pool.query(
+    `DELETE FROM Flashcard_Set 
+     WHERE set_id = $1 AND is_public_FYN = true 
+     RETURNING *`,
+    [setId],
+    (err, result) => {
+      if (err) {
+        console.error("Error deleting public set:", err);
+        return res.status(500).send("Database error");
+      }
+
+      if (result.rowCount === 0) {
+        return res.status(404).send("Public set not found.");
+      }
+
+      res.status(200).json({
+        message: "Public set deleted",
+        deleted: result.rows[0]
+      });
+    }
+  );
+};
+
+
+
+const deletePublicFlashcard = (req, res) => {
+  const flashcardId = parseInt(req.params.flashcard_id);
+  const role = req.user.user_role;
+
+  if (role !== 'admin') {
+    return res.status(403).send("Unauthorized: Only admin can delete public flashcards.");
+  }
+
+  if (!flashcardId) {
+    return res.status(400).send("Missing flashcard ID.");
+  }
+
+  const query = `
+    DELETE FROM Flashcards 
+    WHERE flashcard_id = $1 
+    AND set_id IN (
+      SELECT set_id FROM Flashcard_Set WHERE is_public_FYN = true
+    )
+    RETURNING *;
+  `;
+
+  pool.query(query, [flashcardId], (err, result) => {
+    if (err) {
+      console.error("Error deleting public flashcard:", err);
+      return res.status(500).send("Database error");
+    }
+
+    if (result.rowCount === 0) {
+      return res.status(404).send("Public flashcard not found.");
+    }
+
+    res.status(200).json({
+      message: "Public flashcard deleted",
+      deleted: result.rows[0]
+    });
+  });
+};
+
+
+
 
 
 
 module.exports = {
   registerUser,
   getFlashcardsSets,
+  deleteFlashcardSet,
+  updateFlashcardSet,
   createFlashcardSet,
+  createFlashcard,
+  getFlashcardsBySet,
+  deleteFlashcard,
+  updateFlashcard,
   getUserStatistics,
+  resetStatistics,
+  updateStatistics,
+  saveNotificationToken,
+  getUserPreferences,
+  updateUserPreferences,
+  getPublicSets,
+  getPublicFlashcardsBySet,
+  createPublicSet,
+  deletePublicSet,
+  deletePublicFlashcard,
+  createPublicFlashcard,
+  //PRIDAT PRE ADMINA POST ANNOUNCEMENT
   loginUser
-
 }
