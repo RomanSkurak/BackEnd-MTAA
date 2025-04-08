@@ -9,7 +9,7 @@ const pool = new Pool({
   user: 'postgres',
   host: 'localhost',
   database: 'api',
-  password: 'abc',
+  password: 'aaa123',
   port: 5432,
 })
 
@@ -326,7 +326,7 @@ const updateFlashcard = (req, res) => {
   const flashcardId = parseInt(req.params.flashcard_id);
   const userId = req.user.userId;
 
-  const { name, front_side, back_side, data_type } = req.body;
+  const { name, front_side, back_side, data_type, remove_image_front, remove_image_back } = req.body;
   const imageFront = req.files?.image_front?.[0]?.buffer || null;
   const imageBack = req.files?.image_back?.[0]?.buffer || null;
 
@@ -334,39 +334,65 @@ const updateFlashcard = (req, res) => {
   const values = [];
   let idx = 1;
 
+  // Názov karty
   if (name) {
     fields.push(`name = $${idx++}`);
     values.push(name);
   }
+
+  // Typ dát (text/picture)
   if (data_type) {
     fields.push(`data_type = $${idx++}`);
     values.push(data_type);
   }
+
+  // Textové strany
   if (front_side !== undefined) {
     fields.push(`front_side = $${idx++}`);
     values.push(front_side);
   }
+
   if (back_side !== undefined) {
     fields.push(`back_side = $${idx++}`);
     values.push(back_side);
   }
+
+  // Obrázkové strany
   if (imageFront !== null) {
     fields.push(`image_front = $${idx++}`);
     values.push(imageFront);
   }
+
   if (imageBack !== null) {
     fields.push(`image_back = $${idx++}`);
     values.push(imageBack);
   }
 
+  // Odstránenie obrázkov podľa požiadavky
+  if (remove_image_front === 'true') {
+    // Konflikt: nemôžeš poslať nový obrázok aj príznak na zmazanie
+    if (imageFront !== null) {
+      return res.status(400).send('Conflict: Cannot send image and remove flag at once (front).');
+    }
+    fields.push(`image_front = NULL`);
+  }
+
+  if (remove_image_back === 'true') {
+    if (imageBack !== null) {
+      return res.status(400).send('Conflict: Cannot send image and remove flag at once (back).');
+    }
+    fields.push(`image_back = NULL`);
+  }
+
+  // Ak nie je čo meniť
   if (fields.length === 0) {
     return res.status(400).send('Nothing to update.');
   }
 
-  // Pridáme kontrolu vlastníctva cez JOIN na Flashcard_Set
+  // Finalizačný SQL dotaz
   const query = `
     UPDATE Flashcards 
-    SET ${fields.join(', ')}
+    SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP
     WHERE flashcard_id = $${idx}
       AND set_id IN (
         SELECT set_id FROM Flashcard_Set WHERE user_id = $${idx + 1}
@@ -375,6 +401,7 @@ const updateFlashcard = (req, res) => {
   `;
   values.push(flashcardId, userId);
 
+  // Spustenie query
   pool.query(query, values, (err, result) => {
     if (err) {
       console.error('Error updating flashcard:', err);
@@ -761,7 +788,85 @@ const deletePublicFlashcard = (req, res) => {
 };
 
 
+//ZISKANIE JEDNEHO SETU PODLA SET_ID
+const getSingleFlashcardSet = (req, res) => {
+  const setId = parseInt(req.params.set_id);
+  const userId = req.user.userId;
 
+  const query = `
+    SELECT *
+    FROM Flashcard_Set
+    WHERE set_id = $1 AND user_id = $2
+  `;
+
+  pool.query(query, [setId, userId], (err, result) => {
+    if (err) {
+      console.error('Error fetching single set:', err);
+      return res.status(500).send('Database error');
+    }
+
+    if (result.rows.length === 0) {
+      return res.status(404).send('Set not found or unauthorized');
+    }
+
+    res.status(200).json(result.rows[0]);
+  });
+};
+
+//ZISKANIE JEDNEJ KARY PODLA FLASHCARD_ID
+const getFlashcardById = (req, res) => {
+  const flashcardId = parseInt(req.params.flashcard_id);
+  const userId = req.user.userId;
+
+  if (!flashcardId) {
+    return res.status(400).send("Missing flashcard ID.");
+  }
+
+  const query = `
+    SELECT f.flashcard_id, f.set_id, f.name, f.data_type, f.front_side, f.back_side,
+           encode(f.image_front, 'base64') AS image_front,
+           encode(f.image_back, 'base64') AS image_back
+    FROM Flashcards f
+    JOIN Flashcard_Set s ON f.set_id = s.set_id
+    WHERE f.flashcard_id = $1 AND s.user_id = $2
+  `;
+
+  pool.query(query, [flashcardId, userId], (err, result) => {
+    if (err) {
+      console.error("Error fetching flashcard:", err);
+      return res.status(500).send("Database error.");
+    }
+
+    if (result.rows.length === 0) {
+      return res.status(404).send("Flashcard not found or unauthorized.");
+    }
+
+    res.status(200).json(result.rows[0]);
+  });
+};
+
+const getCurrentUser = (req, res) => {
+  const userId = req.user.userId;
+
+  const query = `
+    SELECT user_id, name, email, user_role
+    FROM Users
+    WHERE user_id = $1
+  `;
+
+  pool.query(query, [userId], (err, result) => {
+    if (err) {
+      console.error("Error fetching user:", err);
+      return res.status(500).send("Database error");
+    }
+
+    if (result.rows.length === 0) {
+      return res.status(404).send("User not found");
+    }
+
+    res.status(200).json(result.rows[0]);
+  });
+};
 
 
 
@@ -787,6 +892,9 @@ module.exports = {
   deletePublicSet,
   deletePublicFlashcard,
   createPublicFlashcard,
+  getSingleFlashcardSet,
+  getFlashcardById,
   //PRIDAT PRE ADMINA POST ANNOUNCEMENT
-  loginUser
+  loginUser,
+  getCurrentUser
 }

@@ -32,6 +32,8 @@ app.get('/verify-token', authenticateToken, (req, res) => {
 //V Appke pridat posielanie headeru spolu s requestom
 app.get('/flashcard-sets', authenticateToken, db.getFlashcardsSets);
 app.post('/flashcard-sets', authenticateToken, db.createFlashcardSet);
+app.get('/flashcard-sets/:set_id', authenticateToken, db.getSingleFlashcardSet);
+app.get('/flashcard/:flashcard_id', authenticateToken, db.getFlashcardById);
 
 
 //CustomMadeFunctions
@@ -72,7 +74,7 @@ app.post('/public-flashcards', authenticateToken, upload.fields([
 app.delete('/public-sets/:set_id', authenticateToken, db.deletePublicSet);
 app.delete('/public-flashcards/:flashcard_id', authenticateToken, db.deletePublicFlashcard);
 
-
+app.get('/me', authenticateToken, db.getCurrentUser);
 
 app.listen(port, () => {
     console.log(`App running on port ${port}.`)
