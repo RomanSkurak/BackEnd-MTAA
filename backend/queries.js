@@ -1,6 +1,8 @@
 const bcrypt = require('bcrypt');
+const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
 const SECRET_KEY = 'tajny_kluc'; // ideálne z .env súboru
+//const dummyPassword = 'guest-password-123';
 //const multer = require('multer');
 //const upload = multer();
 
@@ -9,7 +11,7 @@ const pool = new Pool({
   user: 'postgres',
   host: 'localhost',
   database: 'api',
-  password: 'aaa123',
+  password: 'abc',
   port: 5432,
 })
 
@@ -49,6 +51,10 @@ const loginUser = async (req, res) => {
       return res.status(401).send('Invalid credentials');
     }
 
+    if (!email || !password) {
+      return res.status(400).send("Email and password are required.");
+    }
+
     const user = result.rows[0];
     const isMatch = await bcrypt.compare(password, user.password);
 
@@ -60,12 +66,50 @@ const loginUser = async (req, res) => {
       expiresIn: '8h',
     });
 
-    res.status(200).json({ token });
+    res.status(200).json({ token,userRole: user.user_role, userName: user.name });
   } catch (error) {
     console.error(error);
     res.status(500).send('Login error');
   }
 };
+
+
+
+//GUEST LOGIN
+const guestLogin = async (req, res) => {
+  try {
+    const guestId = uuidv4();
+    const name = `Guest_${guestId.slice(0, 8)}`;
+    const email = `guest_${guestId.slice(0, 8)}@guest.studybro`;
+    const password = await bcrypt.hash('guest', 10); // ← použijeme "dummy" heslo
+    const role = 'host';
+
+    const result = await pool.query(
+      `INSERT INTO users (name, email, password, user_role)
+       VALUES ($1, $2, $3, $4)
+       RETURNING user_id, email, user_role`,
+      [name, email, password, role]
+    );
+
+    const user = result.rows[0];
+
+    const token = jwt.sign(
+      {
+        userId: user.user_id,
+        email: user.email,
+        userRole: user.user_role,
+      },
+      SECRET_KEY,
+      { expiresIn: '48h' }
+    );
+
+    res.status(200).json({ token, userRole: user.user_role });
+  } catch (err) {
+    console.error('Guest login failed:', err);
+    res.status(500).send('Guest login failed');
+  }
+};
+
 
 
 //STATISTIKY
@@ -419,6 +463,8 @@ const updateFlashcard = (req, res) => {
   });
 };
 
+
+
 //RESET Statistics
 const resetStatistics = (req, res) => {
   const userId = req.user.userId;
@@ -644,30 +690,47 @@ const getPublicFlashcardsBySet = (req, res) => {
 const createPublicSet = (req, res) => {
   const { name } = req.body;
   const userId = req.user.userId;
-  const role = req.user.user_role;
-
-  if (role !== 'admin') {
-    return res.status(403).send("Unauthorized: Only admin can create public sets.");
-  }
 
   if (!name) {
     return res.status(400).send("Missing set name.");
   }
 
+  // Overenie role z databázy
   pool.query(
-    `INSERT INTO Flashcard_Set (user_id, name, is_public_FYN) 
-     VALUES ($1, $2, true) RETURNING *`,
-    [userId, name],
+    'SELECT user_role FROM Users WHERE user_id = $1',
+    [userId],
     (err, result) => {
       if (err) {
-        console.error("Error creating public set:", err);
-        return res.status(500).send("Database error");
+        console.error("Error fetching user role:", err);
+        return res.status(500).send("Database error.");
       }
 
-      res.status(201).json({
-        message: "Public set created",
-        set: result.rows[0]
-      });
+      if (result.rows.length === 0) {
+        return res.status(404).send("User not found.");
+      }
+
+      const role = result.rows[0].user_role;
+      if (role !== 'admin') {
+        return res.status(403).send("Unauthorized: Only admin can create public sets.");
+      }
+
+      // Ak je admin → pokračuj vytvorením
+      pool.query(
+        `INSERT INTO Flashcard_Set (user_id, name, is_public_FYN) 
+         VALUES ($1, $2, true) RETURNING *`,
+        [userId, name],
+        (insertErr, insertResult) => {
+          if (insertErr) {
+            console.error("Error creating public set:", insertErr);
+            return res.status(500).send("Database error");
+          }
+
+          res.status(201).json({
+            message: "Public set created",
+            set: insertResult.rows[0]
+          });
+        }
+      );
     }
   );
 };
@@ -788,6 +851,7 @@ const deletePublicFlashcard = (req, res) => {
 };
 
 
+
 //ZISKANIE JEDNEHO SETU PODLA SET_ID
 const getSingleFlashcardSet = (req, res) => {
   const setId = parseInt(req.params.set_id);
@@ -872,6 +936,7 @@ const getCurrentUser = (req, res) => {
 
 module.exports = {
   registerUser,
+  guestLogin,
   getFlashcardsSets,
   deleteFlashcardSet,
   updateFlashcardSet,
@@ -894,7 +959,7 @@ module.exports = {
   createPublicFlashcard,
   getSingleFlashcardSet,
   getFlashcardById,
+  getCurrentUser,
   //PRIDAT PRE ADMINA POST ANNOUNCEMENT
-  loginUser,
-  getCurrentUser
+  loginUser
 }

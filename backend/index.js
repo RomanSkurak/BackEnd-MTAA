@@ -40,7 +40,7 @@ app.get('/flashcard/:flashcard_id', authenticateToken, db.getFlashcardById);
 app.post('/register', db.registerUser);
 app.post('/login', db.loginUser);
 app.get('/statistics', authenticateToken, db.getUserStatistics);
-
+app.post('/guest-login', db.guestLogin);
 
 //4.4.2024
 app.delete('/flashcard-sets/:set_id', authenticateToken, db.deleteFlashcardSet);
@@ -75,6 +75,7 @@ app.delete('/public-sets/:set_id', authenticateToken, db.deletePublicSet);
 app.delete('/public-flashcards/:flashcard_id', authenticateToken, db.deletePublicFlashcard);
 
 app.get('/me', authenticateToken, db.getCurrentUser);
+
 
 app.listen(port, () => {
     console.log(`App running on port ${port}.`)
