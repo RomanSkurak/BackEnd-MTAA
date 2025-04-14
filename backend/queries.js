@@ -22,6 +22,16 @@ const registerUser = async (req, res) => {
   const user_role = 'user';
 
   try {
+
+    if (!name || !email || !password){
+      return res.status(400).send('Missing fields')
+    }
+
+    const checkEmail = await pool.query('SELECT * FROM Users WHERE email = $1', [email]);
+    if (checkEmail.rows.length > 0) {
+      return res.status(409).send('User with this email already exists');
+    }
+
     const result = await pool.query(
       `INSERT INTO Users (name, email, password, user_role)
        VALUES ($1, $2, $3, $4)
@@ -59,10 +69,10 @@ const loginUser = async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password);
 
     if (!isMatch) {
-      return res.status(401).send('Invalid credentials');
+      return res.status(401).send('Wrong password');
     }
 
-    const token = jwt.sign({ userId: user.user_id, email: user.email }, SECRET_KEY, {
+    const token = jwt.sign({ userId: user.user_id, email: user.email, userRole: user.user_role }, SECRET_KEY, {
       expiresIn: '8h',
     });
 
@@ -190,6 +200,7 @@ const getFlashcardsSets = (req, res) => {
     SELECT *
     FROM Flashcard_set fs
     WHERE fs.user_id = $1
+    AND fs.is_public_FYN = false
     ORDER BY fs.set_id ASC
   `;
 
@@ -295,9 +306,8 @@ const getFlashcardsBySet = (req, res) => {
 
 
 
-
-//CREATE Flashcard
-const createFlashcard = (req, res) => {
+//CREATE Flashcard 
+const createFlashcard = async (req, res) => {
   const { set_id, name, data_type, front_side, back_side } = req.body;
   const userId = req.user.userId;
 
@@ -308,24 +318,36 @@ const createFlashcard = (req, res) => {
   const imageFront = req.files?.image_front?.[0]?.buffer || null;
   const imageBack = req.files?.image_back?.[0]?.buffer || null;
 
-  pool.query(
-    `INSERT INTO Flashcards 
-     (set_id, name, data_type, front_side, back_side, image_front, image_back) 
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-    [set_id, name, data_type, front_side, back_side, imageFront, imageBack],
-    (err, result) => {
-      if (err) {
-        console.error(err);
-        return res.status(500).send("Database error");
-      }
+  try {
+    // Overíme, či set patrí používateľovi
+    const check = await pool.query(
+      'SELECT * FROM Flashcard_Set WHERE set_id = $1 AND user_id = $2',
+      [set_id, userId]
+    );
 
-      res.status(201).json({
-        message: "Flashcard created",
-        flashcard: result.rows[0],
-      });
+    if (check.rows.length === 0) {
+      return res.status(403).send("Not authorized to add flashcard to this set.");
     }
-  );
+
+    // Pokračujeme s vložením flashkarty
+    const result = await pool.query(
+      `INSERT INTO Flashcards 
+       (set_id, name, data_type, front_side, back_side, image_front, image_back) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [set_id, name, data_type, front_side, back_side, imageFront, imageBack]
+    );
+
+    res.status(201).json({
+      message: "Flashcard created",
+      flashcard: result.rows[0],
+    });
+
+  } catch (err) {
+    console.error('Error creating flashcard:', err);
+    res.status(500).send("Database error");
+  }
 };
+
 
 
 //DELETE Flashcard
@@ -863,6 +885,7 @@ const getSingleFlashcardSet = (req, res) => {
     WHERE set_id = $1 AND user_id = $2
   `;
 
+
   pool.query(query, [setId, userId], (err, result) => {
     if (err) {
       console.error('Error fetching single set:', err);
@@ -908,6 +931,8 @@ const getFlashcardById = (req, res) => {
     res.status(200).json(result.rows[0]);
   });
 };
+
+
 
 const getCurrentUser = (req, res) => {
   const userId = req.user.userId;
