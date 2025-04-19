@@ -1,24 +1,28 @@
+const dotenv = require('dotenv');
+dotenv.config();
 const bcrypt = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
-const SECRET_KEY = 'tajny_kluc'; // ideálne z .env súboru
+const SECRET_KEY = 'tajny_kluc';
+const socket = require('./socket');
+
 //const dummyPassword = 'guest-password-123';
 //const multer = require('multer');
 //const upload = multer();
 
 const Pool = require('pg').Pool
 const pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'api',
-  password: 'abc',
-  port: 5432,
+  user: process.env.DB_USER ,
+  host:process.env.DB_HOST ,
+  database:process.env.DB_NAME ,
+  password:process.env.DB_PASSWORD ,
+  port:process.env.DB_PORT ,
+  ssl: { rejectUnauthorized: false }
 })
 
 //REGISTRACIA
 const registerUser = async (req, res) => {
   const { name, email, password } = req.body;
-  const hashedPassword = await bcrypt.hash(password, 10);
   const user_role = 'user';
 
   try {
@@ -26,6 +30,7 @@ const registerUser = async (req, res) => {
     if (!name || !email || !password){
       return res.status(400).send('Missing fields')
     }
+    const hashedPassword = await bcrypt.hash(password, 10);
 
     const checkEmail = await pool.query('SELECT * FROM Users WHERE email = $1', [email]);
     if (checkEmail.rows.length > 0) {
@@ -73,7 +78,7 @@ const loginUser = async (req, res) => {
     }
 
     const token = jwt.sign({ userId: user.user_id, email: user.email, userRole: user.user_role }, SECRET_KEY, {
-      expiresIn: '8h',
+      expiresIn: '24h',
     });
 
     res.status(200).json({ token,userRole: user.user_role, userName: user.name });
@@ -91,7 +96,7 @@ const guestLogin = async (req, res) => {
     const guestId = uuidv4();
     const name = `Guest_${guestId.slice(0, 8)}`;
     const email = `guest_${guestId.slice(0, 8)}@guest.studybro`;
-    const password = await bcrypt.hash('guest', 10); // ← použijeme "dummy" heslo
+    const password = await bcrypt.hash('guest', 10); 
     const role = 'host';
 
     const result = await pool.query(
@@ -157,7 +162,7 @@ const createFlashcardSet = (request, response) => {
     return response.status(400).send("Missing flashcard set name.");
   }
 
-  // Najskôr overíme, či už taký set existuje pre tohto používateľa
+  
   pool.query(
     'SELECT * FROM Flashcard_Set WHERE user_id = $1 AND name = $2',
     [userId, name],
@@ -171,7 +176,7 @@ const createFlashcardSet = (request, response) => {
         return response.status(409).send("Flashcard set with this name already exists.");
       }
 
-      // Ak neexistuje, pokračujeme s INSERT
+     
       pool.query(
         'INSERT INTO Flashcard_Set (user_id, name, is_public_FYN) VALUES ($1, $2, $3) RETURNING *',
         [userId, name, is_public_FYN ?? false],
@@ -319,7 +324,7 @@ const createFlashcard = async (req, res) => {
   const imageBack = req.files?.image_back?.[0]?.buffer || null;
 
   try {
-    // Overíme, či set patrí používateľovi
+    // Overenie ci mu patri
     const check = await pool.query(
       'SELECT * FROM Flashcard_Set WHERE set_id = $1 AND user_id = $2',
       [set_id, userId]
@@ -329,7 +334,7 @@ const createFlashcard = async (req, res) => {
       return res.status(403).send("Not authorized to add flashcard to this set.");
     }
 
-    // Pokračujeme s vložením flashkarty
+    // vlozime
     const result = await pool.query(
       `INSERT INTO Flashcards 
        (set_id, name, data_type, front_side, back_side, image_front, image_back) 
@@ -387,7 +392,7 @@ const deleteFlashcard = (req, res) => {
 
 
 
-// UPDATE Flashcard (iba pre vlastníka)
+// UPDATE Flashcard
 const updateFlashcard = (req, res) => {
   const flashcardId = parseInt(req.params.flashcard_id);
   const userId = req.user.userId;
@@ -400,19 +405,19 @@ const updateFlashcard = (req, res) => {
   const values = [];
   let idx = 1;
 
-  // Názov karty
+  
   if (name) {
     fields.push(`name = $${idx++}`);
     values.push(name);
   }
 
-  // Typ dát (text/picture)
+  
   if (data_type) {
     fields.push(`data_type = $${idx++}`);
     values.push(data_type);
   }
 
-  // Textové strany
+  
   if (front_side !== undefined) {
     fields.push(`front_side = $${idx++}`);
     values.push(front_side);
@@ -423,7 +428,7 @@ const updateFlashcard = (req, res) => {
     values.push(back_side);
   }
 
-  // Obrázkové strany
+  
   if (imageFront !== null) {
     fields.push(`image_front = $${idx++}`);
     values.push(imageFront);
@@ -434,9 +439,9 @@ const updateFlashcard = (req, res) => {
     values.push(imageBack);
   }
 
-  // Odstránenie obrázkov podľa požiadavky
+  // Odstranenie
   if (remove_image_front === 'true') {
-    // Konflikt: nemôžeš poslať nový obrázok aj príznak na zmazanie
+    
     if (imageFront !== null) {
       return res.status(400).send('Conflict: Cannot send image and remove flag at once (front).');
     }
@@ -450,12 +455,12 @@ const updateFlashcard = (req, res) => {
     fields.push(`image_back = NULL`);
   }
 
-  // Ak nie je čo meniť
+
   if (fields.length === 0) {
     return res.status(400).send('Nothing to update.');
   }
 
-  // Finalizačný SQL dotaz
+ 
   const query = `
     UPDATE Flashcards 
     SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP
@@ -566,7 +571,7 @@ const updateStatistics = (req, res) => {
 };
 
 
-//FCM TOKEN PRE PUSH NOTIFIKACIE (stiahnut dependecies a import do Flutteru)
+//FCM TOKEN PRE PUSH NOTIFIKACIE 
 const saveNotificationToken = (req, res) => {
   const userId = req.user.userId;
   const { fcm_token } = req.body;
@@ -575,7 +580,7 @@ const saveNotificationToken = (req, res) => {
     return res.status(400).send("Missing FCM token.");
   }
 
-  // Najprv overíme, či tento token už pre používateľa existuje
+  // Najprv overenie
   const checkQuery = `
     SELECT * FROM User_Devices 
     WHERE user_id = $1 AND fcm_token = $2
@@ -591,7 +596,7 @@ const saveNotificationToken = (req, res) => {
       return res.status(200).json({ message: "Token already registered." });
     }
 
-    // Ak nie, vložíme nový záznam
+    // Ak nie, vlozime
     const insertQuery = `
       INSERT INTO User_Devices (user_id, fcm_token)
       VALUES ($1, $2)
@@ -717,7 +722,7 @@ const createPublicSet = (req, res) => {
     return res.status(400).send("Missing set name.");
   }
 
-  // Overenie role z databázy
+  // Overenie role 
   pool.query(
     'SELECT user_role FROM Users WHERE user_id = $1',
     [userId],
@@ -736,7 +741,7 @@ const createPublicSet = (req, res) => {
         return res.status(403).send("Unauthorized: Only admin can create public sets.");
       }
 
-      // Ak je admin → pokračuj vytvorením
+      // Ak je admin → pokracuj
       pool.query(
         `INSERT INTO Flashcard_Set (user_id, name, is_public_FYN) 
          VALUES ($1, $2, true) RETURNING *`,
@@ -747,9 +752,19 @@ const createPublicSet = (req, res) => {
             return res.status(500).send("Database error");
           }
 
+
+          // ✅ Vysielame správu cez WebSocket
+          const io = socket.getIO();
+          const createdSet = insertResult.rows[0];
+          io.emit('newPublicSet', {
+            title: createdSet.name,
+            created_by: userId,
+            created_at: new Date()
+          });
+
           res.status(201).json({
             message: "Public set created",
-            set: insertResult.rows[0]
+            set: createdSet
           });
         }
       );
@@ -874,7 +889,7 @@ const deletePublicFlashcard = (req, res) => {
 
 
 
-//ZISKANIE JEDNEHO SETU PODLA SET_ID
+
 const getSingleFlashcardSet = (req, res) => {
   const setId = parseInt(req.params.set_id);
   const userId = req.user.userId;
@@ -900,7 +915,7 @@ const getSingleFlashcardSet = (req, res) => {
   });
 };
 
-//ZISKANIE JEDNEJ KARY PODLA FLASHCARD_ID
+
 const getFlashcardById = (req, res) => {
   const flashcardId = parseInt(req.params.flashcard_id);
   const userId = req.user.userId;
@@ -985,6 +1000,5 @@ module.exports = {
   getSingleFlashcardSet,
   getFlashcardById,
   getCurrentUser,
-  //PRIDAT PRE ADMINA POST ANNOUNCEMENT
   loginUser
 }

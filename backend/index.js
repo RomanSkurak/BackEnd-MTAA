@@ -1,4 +1,6 @@
 const express = require('express')
+const dotenv = require('dotenv');
+dotenv.config();
 const bodyParser = require('body-parser')
 const multer = require('multer');
 const storage = multer.memoryStorage(); // uloží binárne dáta do pamäte
@@ -9,6 +11,9 @@ const db = require('./queries')
 const port = 3000
 const swaggerUi = require('swagger-ui-express');
 const swaggerJsdoc = require('swagger-jsdoc');
+const http = require('http');
+const server = http.createServer(app);
+const socket = require('./socket');
 
 app.use(bodyParser.json())
 app.use(
@@ -102,10 +107,12 @@ const swaggerOptions = {
 const swaggerDocs = swaggerJsdoc(swaggerOptions);
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 
-//Pocuvanie na porte
-app.listen(port, () => {
-    console.log(`App running on port ${port}.`)
-  })
 
+//SERVER
+const io = socket.init(server); // inicializuj socket.io
+
+server.listen(port, () => {
+  console.log(`🟢 Server beží na porte ${port}`);
+});
 
   
