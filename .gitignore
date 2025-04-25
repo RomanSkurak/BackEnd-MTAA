@@ -1,5 +1,7 @@
-backend/.env
-backend/.env
-backend/.env
-backend/.env
-/backend/node_modules
+# Ignoruj .env v celom projekte
+.env
+**/.env
+
+# Ignoruj node_modules všade
+node_modules/
+**/node_modules/
