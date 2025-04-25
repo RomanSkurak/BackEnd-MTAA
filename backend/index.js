@@ -8,12 +8,16 @@ const upload = multer({ storage: storage });
 const authenticateToken = require('./auth'); // import middleware
 const app = express()
 const db = require('./queries')
-const port = 3000
+const PORT = process.env.PORT || 3000
 const swaggerUi = require('swagger-ui-express');
 const swaggerJsdoc = require('swagger-jsdoc');
 const http = require('http');
 const server = http.createServer(app);
 const socket = require('./socket');
+
+const cors = require('cors');
+app.use(cors({ origin: true, credentials: true }));
+
 
 app.use(bodyParser.json())
 app.use(
@@ -111,8 +115,8 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 //SERVER
 const io = socket.init(server); // inicializuj socket.io
 
-server.listen(port, () => {
-  console.log(`🟢 Server beží na porte ${port}`);
+server.listen(PORT, () => {
+  console.log(`🟢 Server beží na porte ${PORT}`);
 });
 
   
