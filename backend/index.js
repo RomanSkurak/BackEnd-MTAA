@@ -92,20 +92,39 @@ app.get('/me', authenticateToken, db.getCurrentUser);//
 const { createLearningSession, getUserStatistics } = require('./queries');
 // vloženie sedenia
 app.post('/learning-sessions', authenticateToken, async (req, res) => {
-  const userId = req.user.userId;
-  const { start_time, end_time, correct_answers, total_answers } = req.body;
-  const { rows } = await createLearningSession({userId, start_time, end_time, correct_answers, total_answers});
-  // po vložení hneď pošli aj aktualizované štatistiky
-  const stats = (await getUserStatistics(userId)).rows[0];
-  res.status(201).json({ session: rows[0], statistics: stats });
+  try {
+    const userId = req.user.userId;
+    const { start_time, end_time, correct_answers, total_answers } = req.body;
+
+    const result = await createLearningSession({
+      userId,
+      start_time,
+      end_time,
+      correct_answers,
+      total_answers
+    });
+
+    const session = result.rows[0];
+    const stats = await getUserStatistics(userId) || {
+      avg_accuracy: 0,
+      total_time_secs: 0,
+      best_streak: 0,
+      current_streak: 0
+    };
+
+    res.status(201).json({ session, statistics: stats });
+  } catch (error) {
+    console.error("❌ Error in POST /learning-sessions:", error);
+    res.status(500).json({ message: "Chyba pri ukladaní učenia" });
+  }
 });
+
 
 // načítanie štatistík
 app.get('/statistics', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
-    const result = await getUserStatistics(userId);
-    const stats = result?.rows?.[0] || {
+    const stats = await getUserStatistics(userId) || {
       avg_accuracy: 0,
       total_time_secs: 0,
       best_streak: 0,
