@@ -960,7 +960,7 @@ const createLearningSession = ({userId, start_time, end_time, correct_answers, t
 const getUserStatistics = (userId) => pool.query(`
   WITH sessions AS (
     SELECT *
-    FROM Learning_Sessions
+    FROM learning_sessions
     WHERE user_id = $1
   ),
   agg AS (
@@ -996,16 +996,20 @@ const getUserStatistics = (userId) => pool.query(`
   SELECT
     agg.avg_accuracy,
     agg.total_time_secs,
-    -- najdlhší streak počas celej histórie
-    COALESCE(MAX(streaks.length), 0) AS best_streak,
-    -- dĺžka streaku, ktorý končí dnes
-    COALESCE((
-      SELECT length
-      FROM streaks
-      WHERE last_day = (SELECT MAX(d) FROM dates)
-    ), 0) AS current_streak
-  FROM agg;
+    COALESCE(max_s.best_streak, 0) AS best_streak,
+    COALESCE(cs.current_streak, 0) AS current_streak
+  FROM agg
+  LEFT JOIN (
+    SELECT MAX(length) AS best_streak FROM streaks
+  ) AS max_s ON true
+  LEFT JOIN (
+    SELECT length AS current_streak
+    FROM streaks
+    WHERE last_day = (SELECT MAX(d) FROM dates)
+    LIMIT 1
+  ) AS cs ON true;
 `, [userId]);
+
 
 
 
