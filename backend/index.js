@@ -89,6 +89,26 @@ app.get('/me', authenticateToken, db.getCurrentUser);//
 
 
 
+const { createLearningSession, getUserStatistics } = require('./queries');
+// vloženie sedenia
+app.post('/learning-sessions', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const { start_time, end_time, correct_answers, total_answers } = req.body;
+  const { rows } = await createLearningSession({userId, start_time, end_time, correct_answers, total_answers});
+  // po vložení hneď pošli aj aktualizované štatistiky
+  const stats = (await getUserStatistics(userId)).rows[0];
+  res.status(201).json({ session: rows[0], statistics: stats });
+});
+
+// načítanie štatistík
+app.get('/statistics', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const stats = (await getUserStatistics(userId)).rows[0];
+  res.json(stats);
+});
+
+
+
 //DOKUMENTACIA API
 const swaggerOptions = {
   swaggerDefinition: {

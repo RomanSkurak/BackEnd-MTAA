@@ -127,32 +127,6 @@ const guestLogin = async (req, res) => {
 
 
 
-//STATISTIKY
-const getUserStatistics = (req, res) => {
-  const userId = req.user.userId; // z tokenu 
-
-  const query = `
-    SELECT avg_accuracy, total_learning_time, best_learning_streak, current_learning_streak
-    FROM Users
-    WHERE user_id = $1
-  `;
-
-  pool.query(query, [userId], (error, results) => {
-    if (error) {
-      console.error('Error fetching user statistics:', error);
-      return res.status(500).send('Database error');
-    }
-
-    if (results.rows.length === 0) {
-      return res.status(404).send('User not found');
-    }
-
-    res.status(200).json(results.rows[0]);
-  });
-};
-
-
-
 //VYTVARANIE SETU
 const createFlashcardSet = (request, response) => {
   const { name, is_public_FYN } = request.body;
@@ -973,6 +947,69 @@ const getCurrentUser = (req, res) => {
 };
 
 
+// vložiť nový session
+const createLearningSession = ({userId, start_time, end_time, correct_answers, total_answers}) =>
+  pool.query(`
+    INSERT INTO Learning_Sessions(user_id, start_time, end_time, correct_answers, total_answers)
+    VALUES($1,$2,$3,$4,$5) RETURNING *;
+  `, [userId, start_time, end_time, correct_answers, total_answers]);
+
+
+//STATISTIKY
+// získať všetky 4 agregáty naraz
+const getUserStatistics = (userId) => pool.query(`
+  WITH sessions AS (
+    SELECT *
+    FROM Learning_Sessions
+    WHERE user_id = $1
+  ),
+  agg AS (
+    SELECT
+      COALESCE(SUM(correct_answers)::float / NULLIF(SUM(total_answers),0), 0) AS avg_accuracy,
+      COALESCE(SUM(EXTRACT(EPOCH FROM end_time - start_time)), 0) AS total_time_secs
+    FROM sessions
+  ),
+  dates AS (
+    SELECT DISTINCT DATE(start_time) AS d
+    FROM sessions
+  ),
+  numbered AS (
+    SELECT
+      d,
+      ROW_NUMBER() OVER (ORDER BY d) AS rn
+    FROM dates
+  ),
+  grouped AS (
+    SELECT
+      d,
+      d - (rn * INTERVAL '1 day') AS grp
+    FROM numbered
+  ),
+  streaks AS (
+    SELECT
+      grp,
+      COUNT(*) AS length,
+      MAX(d) AS last_day
+    FROM grouped
+    GROUP BY grp
+  )
+  SELECT
+    agg.avg_accuracy,
+    agg.total_time_secs,
+    -- najdlhší streak počas celej histórie
+    COALESCE(MAX(streaks.length), 0) AS best_streak,
+    -- dĺžka streaku, ktorý končí dnes
+    COALESCE((
+      SELECT length
+      FROM streaks
+      WHERE last_day = (SELECT MAX(d) FROM dates)
+    ), 0) AS current_streak
+  FROM agg;
+`, [userId]);
+
+
+
+
 
 module.exports = {
   registerUser,
@@ -1000,5 +1037,6 @@ module.exports = {
   getSingleFlashcardSet,
   getFlashcardById,
   getCurrentUser,
+  createLearningSession,
   loginUser
 }
