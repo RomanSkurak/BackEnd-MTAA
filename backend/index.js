@@ -102,10 +102,23 @@ app.post('/learning-sessions', authenticateToken, async (req, res) => {
 
 // načítanie štatistík
 app.get('/statistics', authenticateToken, async (req, res) => {
-  const userId = req.user.userId;
-  const stats = (await getUserStatistics(userId)).rows[0];
-  res.json(stats);
+  try {
+    const userId = req.user.userId;
+    const result = await getUserStatistics(userId);
+    const stats = result?.rows?.[0] || {
+      avg_accuracy: 0,
+      total_time_secs: 0,
+      best_streak: 0,
+      current_streak: 0
+    };
+
+    res.json(stats);
+  } catch (error) {
+    console.error("❌ Chyba pri GET /statistics:", error);
+    res.status(500).json({ message: "Chyba pri načítaní štatistík" });
+  }
 });
+
 
 
 
