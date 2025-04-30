@@ -957,58 +957,57 @@ const createLearningSession = ({userId, start_time, end_time, correct_answers, t
 
 //STATISTIKY
 // získať všetky 4 agregáty naraz
-const getUserStatistics = (userId) => pool.query(`
-  WITH sessions AS (
-    SELECT *
-    FROM learning_sessions
-    WHERE user_id = $1
-  ),
-  agg AS (
+const getUserStatistics = async (userId) => {
+  const result = await pool.query(`
+    WITH sessions AS (
+      SELECT *
+      FROM learning_sessions
+      WHERE user_id = $1
+    ),
+    agg AS (
+      SELECT
+        COALESCE(SUM(correct_answers)::float / NULLIF(SUM(total_answers), 0), 0) AS avg_accuracy,
+        COALESCE(SUM(EXTRACT(EPOCH FROM end_time - start_time)), 0) AS total_time_secs
+      FROM sessions
+    ),
+    dates AS (
+      SELECT DISTINCT DATE(start_time) AS d
+      FROM sessions
+    ),
+    numbered AS (
+      SELECT d, ROW_NUMBER() OVER (ORDER BY d) AS rn
+      FROM dates
+    ),
+    grouped AS (
+      SELECT d, d - (rn * INTERVAL '1 day') AS grp
+      FROM numbered
+    ),
+    streaks AS (
+      SELECT grp, COUNT(*) AS length, MAX(d) AS last_day
+      FROM grouped
+      GROUP BY grp
+    ),
+    best AS (
+      SELECT MAX(length) AS best_streak FROM streaks
+    ),
+    current AS (
+      SELECT length AS current_streak
+      FROM streaks
+      WHERE last_day = (SELECT MAX(d) FROM dates)
+      LIMIT 1
+    )
     SELECT
-      COALESCE(SUM(correct_answers)::float / NULLIF(SUM(total_answers),0), 0) AS avg_accuracy,
-      COALESCE(SUM(EXTRACT(EPOCH FROM end_time - start_time)), 0) AS total_time_secs
-    FROM sessions
-  ),
-  dates AS (
-    SELECT DISTINCT DATE(start_time) AS d
-    FROM sessions
-  ),
-  numbered AS (
-    SELECT
-      d,
-      ROW_NUMBER() OVER (ORDER BY d) AS rn
-    FROM dates
-  ),
-  grouped AS (
-    SELECT
-      d,
-      d - (rn * INTERVAL '1 day') AS grp
-    FROM numbered
-  ),
-  streaks AS (
-    SELECT
-      grp,
-      COUNT(*) AS length,
-      MAX(d) AS last_day
-    FROM grouped
-    GROUP BY grp
-  )
-  SELECT
-    agg.avg_accuracy,
-    agg.total_time_secs,
-    COALESCE(max_s.best_streak, 0) AS best_streak,
-    COALESCE(cs.current_streak, 0) AS current_streak
-  FROM agg
-  LEFT JOIN (
-    SELECT MAX(length) AS best_streak FROM streaks
-  ) AS max_s ON true
-  LEFT JOIN (
-    SELECT length AS current_streak
-    FROM streaks
-    WHERE last_day = (SELECT MAX(d) FROM dates)
-    LIMIT 1
-  ) AS cs ON true;
-`, [userId]);
+      agg.avg_accuracy,
+      agg.total_time_secs,
+      COALESCE(best.best_streak, 0) AS best_streak,
+      COALESCE(current.current_streak, 0) AS current_streak
+    FROM agg
+    LEFT JOIN best ON true
+    LEFT JOIN current ON true;
+  `, [userId]);
+
+  return result.rows[0]; 
+};
 
 
 

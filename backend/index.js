@@ -112,6 +112,7 @@ app.get('/statistics', authenticateToken, async (req, res) => {
       current_streak: 0
     };
 
+    console.log("🟡 stats to be returned:", stats);
     res.json(stats);
   } catch (error) {
     console.error("❌ Chyba pri GET /statistics:", error);
