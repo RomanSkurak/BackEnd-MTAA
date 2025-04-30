@@ -50,7 +50,7 @@ app.get('/flashcard/:flashcard_id', authenticateToken, db.getFlashcardById);
 //CustomMadeFunctions
 app.post('/register', db.registerUser);//
 app.post('/login', db.loginUser);//
-app.get('/statistics', authenticateToken, db.getUserStatistics);//
+//app.get('/statistics', authenticateToken, db.getUserStatistics);//
 app.post('/guest-login', db.guestLogin);//
 
 //4.4.2024
