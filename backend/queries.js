@@ -645,7 +645,7 @@ const updateUserPreferences = (req, res) => {
 
 const getPublicSets = (req, res) => {
   const query = `
-    SELECT set_id, name, user_id, created_at
+    SELECT set_id, name, user_id, created_at, is_public_fyn, updated_at
     FROM Flashcard_Set
     WHERE is_public_FYN = true
     ORDER BY created_at DESC
